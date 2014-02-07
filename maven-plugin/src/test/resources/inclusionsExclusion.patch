@@ -1,0 +1,23 @@
+@@ -1,4 +1,4 @@
+-<?xml version="1.0" encoding="UTF-8"?>
++<?xml version="1.0" encoding="UTF-8"?>
+  <project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd" xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <modelVersion>4.0.0</modelVersion>
+  
+@@ -326,6 +326,10 @@
+            <packageName>com.mysema.query.jpa.domain.sql</packageName>
+            <targetFolder>src/test/java</targetFolder>
+            <namePrefix>S</namePrefix>
++            <imports>
++                <import>java.io</import>
++                <import>java.io.File</import>
++            </imports>
+          </configuration>
+          <dependencies>
+            <dependency>
+@@ -338,4 +342,4 @@
+      </plugins>
+    </build>
+  
+-</project>
++</project>
