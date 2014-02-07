@@ -1,24 +1,4 @@
-/*
- * Sonar PullRequest Report (Maven plugin)
- * Copyright (C) 2010 klicap - ingenieria del puzle
- * dev@sonar.codehaus.org
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02
- */
-
-package com.marvinformatics.sonarpullrequestintegration.mojo;
+package com.marvinformatics.sonar.pullrequestintegration;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -105,28 +85,28 @@ public class SonarPullRequestMojo extends AbstractMojo {
 	 * 
 	 * @parameter expression="${github.oauth2}"
 	 */
-	private String oauth2 = "7f7f79ecbaa0f2a6521bab44af799155c80d54d5";
+	private String oauth2;
 
 	/**
 	 * Github pull request ID
 	 * 
 	 * @parameter expression="${github.pullRequestId}"
 	 */
-	private int pullRequestId = 1;
+	private int pullRequestId;
 
 	/**
 	 * Github repository owner
 	 * 
 	 * @parameter expression="${github.repositoryOwner}"
 	 */
-	private String repositoryOwner = "velo";
+	private String repositoryOwner;
 
 	/**
 	 * Github repository name
 	 * 
 	 * @parameter expression="${github.repositoryName}"
 	 */
-	private String repositoryName = "querydsl";
+	private String repositoryName;
 
 	public void execute() throws MojoExecutionException {
 		List<Issue> issues;
@@ -196,8 +176,8 @@ public class SonarPullRequestMojo extends AbstractMojo {
 					comment.getPath()).iterator();
 			while (issues.hasNext()) {
 				Issue issue = (Issue) issues.next();
-				int position = linePositioners.get(comment.getPath()).toPostion(
-						issue.line());
+				int position = linePositioners.get(comment.getPath())
+						.toPostion(issue.line());
 				if (position == comment.getPosition()
 						&& issue.message().equals(comment.getBody()))
 					issues.remove();

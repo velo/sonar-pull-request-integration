@@ -1,7 +1,6 @@
-package com.marvinformatics.sonarpullrequestintegration.mojo;
+package com.marvinformatics.sonar.pullrequestintegration;
 
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import com.google.common.collect.Maps;
 

@@ -1,4 +1,4 @@
-package com.marvinformatics.sonarpullrequestintegration.mojo;
+package com.marvinformatics.sonar.pullrequestintegration;
 
 import java.io.File;
 import java.io.IOException;
@@ -8,7 +8,7 @@ import org.junit.Test;
 
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
-import com.marvinformatics.sonarpullrequestintegration.mojo.LinePositioner;
+import com.marvinformatics.sonar.pullrequestintegration.LinePositioner;
 
 public class LinePositionerTest {
 
