@@ -6,7 +6,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Set;
 
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -24,9 +23,9 @@ import org.sonar.wsclient.issue.IssueClient;
 import org.sonar.wsclient.issue.IssueQuery;
 import org.sonar.wsclient.issue.Issues;
 import org.sonar.wsclient.issue.internal.DefaultIssueClient;
-import org.sonar.wsclient.services.Violation;
 
 import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 
@@ -46,6 +45,14 @@ public class SonarPullRequestMojo extends AbstractMojo {
 	 * @readonly
 	 */
 	private MavenProject project;
+
+	/**
+	 * The projects in the reactor.
+	 * 
+	 * @parameter expression="${reactorProjects}"
+	 * @readonly
+	 */
+	private List<MavenProject> reactorProjects;
 
 	/**
 	 * Sonar Base URL.
@@ -108,123 +115,217 @@ public class SonarPullRequestMojo extends AbstractMojo {
 	 */
 	private String repositoryName;
 
+	private Repository repository;
+
+	private PullRequestService pullRequestService;
+
 	public void execute() throws MojoExecutionException {
+		try {
+			connectGithub();
+		} catch (IOException e) {
+			throw new MojoExecutionException( "Unable to comment to github", e );
+		}
+
+		getLog().info( "Branch " + sonarBranch + " selected" );
+
+		ComponentConverter componentConverter;
+		try {
+			componentConverter = getRelatedComponents();
+		} catch (IOException e) {
+			throw new MojoExecutionException( "Unable to get pull request file list", e );
+		}
+		getLog().info( "Files affected " + componentConverter.size() );
+
 		List<Issue> issues;
 		try {
-			issues = getIssues();
+			issues = getIssues( componentConverter );
 		} catch (Exception e) {
-			throw new MojoExecutionException("Unable to get sonar project", e);
+			throw new MojoExecutionException( "Unable to get sonar project", e );
 		}
+		getLog().info( "Issues found " + issues.size() );
+		if (issues.isEmpty())
+			return;
 
 		Multimap<String, Issue> fileViolations = LinkedHashMultimap.create();
 		for (Issue issue : issues) {
-			String fileName = issue.componentKey();
-			fileName = fileName.substring(fileName.lastIndexOf(':') + 1);
-			fileName = fileName.replace('.', '/');
-			fileName = fileName + ".java";
-			fileViolations.put(fileName, issue);
+			fileViolations.put( componentConverter.componentToPath( issue.componentKey() ), issue );
 		}
+
+		Map<String, LinePositioner> linePositioners;
+		try {
+			linePositioners = createLinePositioners();
+		} catch (IOException e) {
+			throw new MojoExecutionException( "Unable to get commits on github", e );
+		}
+
+		Map<String, String> filesSha = getFilesSha();
+
+		removeIssuesOutsideBounds( fileViolations, linePositioners );
+		getLog().info( "Files with issues " + fileViolations.keySet().size() );
+		removeIssuesAlreadyReported( fileViolations, linePositioners );
+		getLog().info( "Files with new issues " + fileViolations.keySet().size() );
 
 		try {
-			recordGit(fileViolations);
+			recordGit( fileViolations, linePositioners, filesSha );
 		} catch (IOException e) {
-			throw new MojoExecutionException("Unable to comment on github", e);
+			throw new MojoExecutionException( "Unable to comment on github", e );
 		}
-
 	}
 
-	private void recordGit(Multimap<String, Issue> fileViolations)
-			throws IOException {
-		GitHubClient client = new GitHubClient().setOAuth2Token(oauth2);
-
-		RepositoryService rs = new RepositoryService(client);
-		Repository repository = rs.getRepository(repositoryOwner,
-				repositoryName);
-
-		PullRequestService pullRequestService = new PullRequestService(client);
-
-		Iterator<RepositoryCommit> commits = pullRequestService.getCommits(
-				repository, pullRequestId).iterator();
-		if (!commits.hasNext())
-			return;
-
-		RepositoryCommit lastCommit = commits.next();
-
-		List<CommitFile> files = pullRequestService.getFiles(repository,
-				pullRequestId);
-
-		Multimap<String, Issue> relatedFileViolations = LinkedHashMultimap
-				.create();
-
-		Map<String, LinePositioner> linePositioners = Maps.newLinkedHashMap();
-		for (CommitFile commitFile : files) {
-			Set<String> keys = fileViolations.keySet();
-			for (String key : keys) {
-				if (commitFile.getFilename().contains(key)) {
-					relatedFileViolations.putAll(commitFile.getFilename(),
-							fileViolations.get(key));
-					linePositioners.put(commitFile.getFilename(),
-							new LinePositioner(commitFile.getPatch()));
-				}
-			}
+	private Map<String, String> getFilesSha() throws MojoExecutionException {
+		List<CommitFile> files;
+		try {
+			files = pullRequestService.getFiles( repository, pullRequestId );
+		} catch (IOException e) {
+			throw new MojoExecutionException( "Unable to retrieve commits from github", e );
 		}
 
-		List<CommitComment> currentComments = pullRequestService.getComments(
-				repository, pullRequestId);
-		for (CommitComment comment : currentComments) {
-			Iterator<Issue> issues = relatedFileViolations.get(
-					comment.getPath()).iterator();
+		Map<String, String> shas = Maps.newHashMap();
+		for (CommitFile commitFile : files) {
+			shas.put( commitFile.getFilename(), commitFile.getBlobUrl().replaceAll( ".*blob/","" ).replaceAll( "/.*", "" ) );
+		}
+		return shas;
+	}
+
+	private void removeIssuesOutsideBounds(Multimap<String, Issue> fileViolations,
+			Map<String, LinePositioner> linePositioners) {
+
+		List<String> paths = Lists.newArrayList( fileViolations.keySet() );
+		for (String path : paths) {
+			Iterator<Issue> issues = fileViolations.get( path ).iterator();
 			while (issues.hasNext()) {
 				Issue issue = (Issue) issues.next();
-				int position = linePositioners.get(comment.getPath())
-						.toPostion(issue.line());
-				if (position == comment.getPosition()
-						&& issue.message().equals(comment.getBody()))
+				Integer line = issue.line();
+				if (line == null)
+					line = 1;
+
+				int position = linePositioners.get( path ).toPostion( line );
+				if (position == -1)
 					issues.remove();
 			}
 		}
+	}
 
-		Collection<Entry<String, Issue>> entries = relatedFileViolations
-				.entries();
+	private Map<String, LinePositioner> createLinePositioners() throws IOException {
+		List<CommitFile> files = pullRequestService.getFiles( repository, pullRequestId );
+
+		Map<String, LinePositioner> linePositioners = Maps.newLinkedHashMap();
+		for (CommitFile commitFile : files) {
+			linePositioners.put( commitFile.getFilename(), new LinePositioner( commitFile.getPatch() ) );
+		}
+
+		return linePositioners;
+	}
+
+	private void connectGithub() throws IOException {
+		GitHubClient client = new GitHubClient().setOAuth2Token( oauth2 );
+
+		RepositoryService repositoryService = new RepositoryService( client );
+		repository = repositoryService.getRepository( repositoryOwner, repositoryName );
+
+		pullRequestService = new PullRequestService( client );
+	}
+
+	private ComponentConverter getRelatedComponents() throws IOException {
+		List<CommitFile> files = pullRequestService.getFiles( repository, pullRequestId );
+
+		return new ComponentConverter( sonarBranch, reactorProjects, files );
+	}
+
+	private void recordGit(Multimap<String, Issue> fileViolations, Map<String, LinePositioner> linePositioners,			Map<String, String> filesSha)			throws IOException {
+		Iterator<RepositoryCommit> commits = pullRequestService.getCommits(				repository, pullRequestId ).iterator();
+		if (!commits.hasNext())
+			return;
+
+		Collection<Entry<String, Issue>> entries = fileViolations.entries();
 		for (Entry<String, Issue> entry : entries) {
+			String path = entry.getKey();
+			
 			CommitComment comment = new CommitComment();
-			comment.setBody(entry.getValue().message());
-			comment.setCommitId(lastCommit.getSha());
-			comment.setPath(entry.getKey());
+			comment.setBody( entry.getValue().message() );
+			comment.setCommitId( filesSha.get( path ) );
+			comment.setPath( path );
 
-			int line = entry.getValue().line();
-			comment.setLine(line);
-			comment.setPosition(linePositioners.get(entry.getKey()).toPostion(
-					line));
+			Integer line = entry.getValue().line();
+			if (line == null)
+				continue;
 
-			pullRequestService
-					.createComment(repository, pullRequestId, comment);
+			comment.setLine( line );
+			comment.setPosition( linePositioners.get( path ).toPostion( line ) );
+
+			try {
+				pullRequestService
+						.createComment( repository, pullRequestId, comment );
+			} catch (Exception e) {
+				getLog().error( "Unable to comment on: " + path );
+			}
 		}
 	}
 
-	private List<Issue> getIssues() throws IOException {
+	private void removeIssuesAlreadyReported(Multimap<String, Issue> fileViolations,
+			Map<String, LinePositioner> linePositioners) throws MojoExecutionException {
+		List<CommitComment> currentComments;
+		try {
+			currentComments = pullRequestService.getComments( repository, pullRequestId );
+		} catch (IOException e) {
+			throw new MojoExecutionException( "Unable to retrieve comments", e );
+		}
+		for (CommitComment comment : currentComments) {
+			Iterator<Issue> issues = fileViolations.get(
+					comment.getPath() ).iterator();
+			while (issues.hasNext()) {
+				Issue issue = (Issue) issues.next();
+				Integer line = issue.line();
+				if (line == null)
+					line = 1;
+
+				int position = linePositioners.get( comment.getPath() )
+						.toPostion( line );
+				if (position == comment.getPosition()
+						&& issue.message().equals( comment.getBody() ))
+					issues.remove();
+			}
+		}
+	}
+
+	private List<Issue> getIssues(ComponentConverter resources) {
 		if (sonarHostUrl != null) {
-			if (sonarHostUrl.endsWith("/")) {
-				sonarHostUrl = sonarHostUrl.substring(0,
-						sonarHostUrl.length() - 1);
+			if (sonarHostUrl.endsWith( "/" )) {
+				sonarHostUrl = sonarHostUrl.substring( 0,
+						sonarHostUrl.length() - 1 );
 			}
 		}
 
+		HttpRequestFactory requestFactory = new HttpRequestFactory( sonarHostUrl )
+				.setLogin( username ).setPassword( password );
+		IssueClient client = new DefaultIssueClient( requestFactory );
+
+		List<Issue> issues = Lists.newArrayList();
+		for (String component : resources.getComponents()) {
+			Issues result;
+			try {
+				result = client.find( IssueQuery.create()
+						.componentRoots( sonarProjectId() )
+						.components( component )
+						);
+			} catch (Exception e) {
+				getLog().error( "Unable to get issues for: " + component );
+				getLog().debug( e.getMessage(), e );
+				continue;
+			}
+			issues.addAll( result.list() );
+		}
+
+		return issues;
+	}
+
+	private String sonarProjectId() {
 		String sonarProjectId = project.getGroupId() + ":"
 				+ project.getArtifactId();
 		if (sonarBranch != null) {
 			sonarProjectId += ":" + sonarBranch;
-			getLog().info("Branch " + sonarBranch + " selected");
 		}
-
-		HttpRequestFactory requestFactory = new HttpRequestFactory(sonarHostUrl)
-				.setLogin(username).setPassword(password);
-		IssueClient client = new DefaultIssueClient(requestFactory);
-		Issues result = client.find(IssueQuery.create().componentRoots(
-				sonarProjectId));
-		List<Issue> issues = result.list();
-
-		return issues;
+		return sonarProjectId;
 	}
 
 }
