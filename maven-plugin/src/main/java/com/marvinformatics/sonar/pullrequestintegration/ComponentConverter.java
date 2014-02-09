@@ -1,4 +1,4 @@
-package com.contaazul.sonarpullrequestintegration.mojo;
+package com.marvinformatics.sonar.pullrequestintegration;
 
 import java.io.File;
 import java.util.List;
@@ -10,7 +10,7 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.google.common.collect.Lists;
 
-public class ComponentConverter { 
+public class ComponentConverter {
 
 	private final BiMap<String, String> components = HashBiMap.create();
 	private final List<MavenProject> reactorProjects;
@@ -41,7 +41,7 @@ public class ComponentConverter {
 			return null;
 		String fullPath = file.getAbsolutePath();
 
-		String sources = new File(project.getBuild().getSourceDirectory()).getAbsolutePath();
+		String sources = new File( project.getBuild().getSourceDirectory() ).getAbsolutePath();
 		String classeName = fullPath.substring(
 				fullPath.indexOf( sources ) + sources.length() + 1,
 				fullPath.lastIndexOf( '.' ) ).replace( File.separatorChar, '.' );
@@ -54,7 +54,12 @@ public class ComponentConverter {
 		if (file.exists())
 			return file;
 
-		file = new File( basedir.getParentFile(), path );
+		File root = new File( "" ).getAbsoluteFile();
+		File baseDir = project.getBasedir().getAbsoluteFile();
+
+		int cutPoint = baseDir.getAbsolutePath().length() - root.getAbsolutePath().length();
+
+		file = new File( project.getBasedir(), path.substring( cutPoint ) );
 		if (path.contains( basedir.getName() )
 				&& file.exists())
 			return file;
@@ -63,17 +68,55 @@ public class ComponentConverter {
 	}
 
 	private MavenProject find(String path) {
+		for (MavenProject project : reactorProjects)
+			if (new File( project.getBasedir(), path ).exists())
+				return project;
+
+		int longest = -1;
+		MavenProject bestMatch = null;
 		for (MavenProject project : reactorProjects) {
-			if (new File( project.getBasedir(), path ).exists()) {
-				return project;
-			}
-			if (path.contains( project.getBasedir().getName() )
-					&& new File( project.getBasedir().getParentFile(), path )
-							.exists()) {
-				return project;
+			File baseDir = project.getBasedir().getAbsoluteFile();
+			int longestSubstr = longestSubstr( path, baseDir.getAbsolutePath().replace( '\\', '/' ) );
+
+			if (longestSubstr > longest) {
+				bestMatch = project;
+				longest = longestSubstr;
 			}
 		}
+
+		if (bestMatch != null &&
+				new File( bestMatch.getBasedir(), path.substring( longest ) ).exists())
+			return bestMatch;
+
 		return null;
+	}
+
+	public static int longestSubstr(String first, String second) {
+		if (first == null || second == null || first.length() == 0 || second.length() == 0) {
+			return 0;
+		}
+
+		int maxLen = 0;
+		int fl = first.length();
+		int sl = second.length();
+		int[][] table = new int[fl][sl];
+
+		for (int i = 0; i < fl; i++) {
+			for (int j = 0; j < sl; j++) {
+				if (first.charAt( i ) == second.charAt( j )) {
+					if (i == 0 || j == 0) {
+						table[i][j] = 1;
+					}
+					else {
+						table[i][j] = table[i - 1][j - 1] + 1;
+					}
+					if (table[i][j] > maxLen) {
+						maxLen = table[i][j];
+					}
+				}
+			}
+		}
+		return maxLen;
 	}
 
 	public String[] getComponents() {

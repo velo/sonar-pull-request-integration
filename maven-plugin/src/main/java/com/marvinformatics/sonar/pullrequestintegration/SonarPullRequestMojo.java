@@ -161,9 +161,9 @@ public class SonarPullRequestMojo extends AbstractMojo {
 		Map<String, String> filesSha = getFilesSha();
 
 		removeIssuesOutsideBounds( fileViolations, linePositioners );
-		getLog().info( "Files with issues " + fileViolations.keySet().size() );
+		getLog().info( "Files with issues " + fileViolations.keySet().size() + ":(" + fileViolations.size() + ")" );
 		removeIssuesAlreadyReported( fileViolations, linePositioners );
-		getLog().info( "Files with new issues " + fileViolations.keySet().size() );
+		getLog().info( "Files with new issues " + fileViolations.keySet().size() + ":(" + fileViolations.size() + ")" );
 
 		try {
 			recordGit( fileViolations, linePositioners, filesSha );
@@ -182,7 +182,8 @@ public class SonarPullRequestMojo extends AbstractMojo {
 
 		Map<String, String> shas = Maps.newHashMap();
 		for (CommitFile commitFile : files) {
-			shas.put( commitFile.getFilename(), commitFile.getBlobUrl().replaceAll( ".*blob/","" ).replaceAll( "/.*", "" ) );
+			shas.put( commitFile.getFilename(),
+					commitFile.getBlobUrl().replaceAll( ".*blob/", "" ).replaceAll( "/.*", "" ) );
 		}
 		return shas;
 	}
@@ -211,7 +212,15 @@ public class SonarPullRequestMojo extends AbstractMojo {
 
 		Map<String, LinePositioner> linePositioners = Maps.newLinkedHashMap();
 		for (CommitFile commitFile : files) {
-			linePositioners.put( commitFile.getFilename(), new LinePositioner( commitFile.getPatch() ) );
+			if (commitFile.getPatch() == null)
+				continue;
+
+			LinePositioner positioner;
+			if ("added".equals( commitFile.getStatus() ))
+				positioner = new OneToOneLinePositioner();
+			else
+				positioner = new PatchLinePositioner( commitFile.getPatch() );
+			linePositioners.put( commitFile.getFilename(), positioner );
 		}
 
 		return linePositioners;
@@ -232,15 +241,16 @@ public class SonarPullRequestMojo extends AbstractMojo {
 		return new ComponentConverter( sonarBranch, reactorProjects, files );
 	}
 
-	private void recordGit(Multimap<String, Issue> fileViolations, Map<String, LinePositioner> linePositioners,			Map<String, String> filesSha)			throws IOException {
-		Iterator<RepositoryCommit> commits = pullRequestService.getCommits(				repository, pullRequestId ).iterator();
+	private void recordGit(Multimap<String, Issue> fileViolations, Map<String, LinePositioner> linePositioners,
+			Map<String, String> filesSha) throws IOException {
+		Iterator<RepositoryCommit> commits = pullRequestService.getCommits( repository, pullRequestId ).iterator();
 		if (!commits.hasNext())
 			return;
 
 		Collection<Entry<String, Issue>> entries = fileViolations.entries();
 		for (Entry<String, Issue> entry : entries) {
 			String path = entry.getKey();
-			
+
 			CommitComment comment = new CommitComment();
 			comment.setBody( entry.getValue().message() );
 			comment.setCommitId( filesSha.get( path ) );
@@ -253,11 +263,16 @@ public class SonarPullRequestMojo extends AbstractMojo {
 			comment.setLine( line );
 			comment.setPosition( linePositioners.get( path ).toPostion( line ) );
 
+			getLog().debug( "Path: " + path );
+			getLog().debug( "Line: " + line );
+			getLog().debug( "Position: " + comment.getPosition() );
+
 			try {
 				pullRequestService
 						.createComment( repository, pullRequestId, comment );
 			} catch (Exception e) {
 				getLog().error( "Unable to comment on: " + path );
+				getLog().debug( e );
 			}
 		}
 	}
@@ -301,9 +316,11 @@ public class SonarPullRequestMojo extends AbstractMojo {
 		IssueClient client = new DefaultIssueClient( requestFactory );
 
 		List<Issue> issues = Lists.newArrayList();
+		getLog().debug( "sonarProjectId: " + sonarProjectId() );
 		for (String component : resources.getComponents()) {
 			Issues result;
 			try {
+				getLog().debug( "component: " + component );
 				result = client.find( IssueQuery.create()
 						.componentRoots( sonarProjectId() )
 						.components( component )

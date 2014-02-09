@@ -1,4 +1,4 @@
-package com.contaazul.sonarpullrequestintegration.mojo;
+package com.marvinformatics.sonar.pullrequestintegration;
 
 import static org.junit.Assert.assertEquals;
 
@@ -11,6 +11,7 @@ import org.eclipse.egit.github.core.CommitFile;
 import org.junit.Test;
 
 import com.google.common.collect.Lists;
+import com.marvinformatics.sonar.pullrequestintegration.ComponentConverter;
 
 public class ComponentConverterTest {
 
