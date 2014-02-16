@@ -6,6 +6,7 @@
 *.ear
 
 ## maven stuff
+pom.xml.versionsBackup
 target/
 
 ## eclipse stuff
