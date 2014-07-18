@@ -33,45 +33,34 @@ public class ComponentConverter {
 		if (path == null)
 			return null;
 
-		MavenProject project = find( path );
-		if (project == null)
+		BestMatch bestMatch = find( path );
+		if (bestMatch == null)
 			return null;
-		File file = getFullPath( project, path );
-		if (file == null)
-			return null;
+
+		MavenProject project = bestMatch.project;
+		File file = bestMatch.file;
 		String fullPath = file.getAbsolutePath();
 
 		String sources = new File( project.getBuild().getSourceDirectory() ).getAbsolutePath();
 		String classeName = fullPath.substring(
 				fullPath.indexOf( sources ) + sources.length() + 1,
 				fullPath.lastIndexOf( '.' ) ).replace( File.separatorChar, '.' );
+		if (classeName.startsWith( "." ))
+			classeName = classeName.substring( 1 );
 		return project.getGroupId() + ":" + project.getArtifactId() + ":" + sonarBranch + ":" + classeName;
 	}
 
-	private File getFullPath(MavenProject project, String path) {
-		File basedir = project.getBasedir();
-		File file = new File( basedir, path );
-		if (file.exists())
-			return file;
+	private class BestMatch {
+		private MavenProject project;
+		private File file;
 
-		File root = new File( "" ).getAbsoluteFile();
-		File baseDir = project.getBasedir().getAbsoluteFile();
-
-		int cutPoint = baseDir.getAbsolutePath().length() - root.getAbsolutePath().length();
-
-		file = new File( project.getBasedir(), path.substring( cutPoint ) );
-		if (path.contains( basedir.getName() )
-				&& file.exists())
-			return file;
-
-		return null;
+		private BestMatch(MavenProject project, File file) {
+			this.project = project;
+			this.file = file;
+		}
 	}
 
-	private MavenProject find(String path) {
-		for (MavenProject project : reactorProjects)
-			if (new File( project.getBasedir(), path ).exists())
-				return project;
-
+	private BestMatch find(String path) {
 		int longest = -1;
 		MavenProject bestMatch = null;
 		for (MavenProject project : reactorProjects) {
@@ -84,9 +73,9 @@ public class ComponentConverter {
 			}
 		}
 
-		if (bestMatch != null &&
-				new File( bestMatch.getBasedir(), path.substring( longest ) ).exists())
-			return bestMatch;
+		File file = new File( bestMatch.getBasedir(), path.substring( longest ) );
+		if (bestMatch != null && file.exists())
+			return new BestMatch( bestMatch, file );
 
 		return null;
 	}
