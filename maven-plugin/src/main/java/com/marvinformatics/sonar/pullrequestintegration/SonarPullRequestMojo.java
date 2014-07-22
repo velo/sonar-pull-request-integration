@@ -199,8 +199,13 @@ public class SonarPullRequestMojo extends AbstractMojo {
 				Integer line = issue.line();
 				if (line == null)
 					line = 1;
+				LinePositioner positioner = linePositioners.get( path );
+				if (positioner == null) {
+					issues.remove();
+					continue;
+				}
 
-				int position = linePositioners.get( path ).toPostion( line );
+				int position = positioner.toPostion( line );
 				if (position == -1)
 					issues.remove();
 			}
