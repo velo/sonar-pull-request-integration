@@ -40,13 +40,10 @@ public class ComponentConverter {
 		MavenProject project = bestMatch.project;
 		File file = bestMatch.file;
 		String fullPath = file.getAbsolutePath();
-
-		String sources = new File( project.getBuild().getSourceDirectory() ).getAbsolutePath();
-		String classeName = fullPath.substring(
-				fullPath.indexOf( sources ) + sources.length() + 1,
-				fullPath.lastIndexOf( '.' ) ).replace( File.separatorChar, '.' );
-		if (classeName.startsWith( "." ))
-			classeName = classeName.substring( 1 );
+		
+		String sources  = project.getBasedir().getAbsolutePath();
+		String classeName = fullPath.substring( fullPath.indexOf( sources ) + sources.length()+1 ).replace(
+				File.separatorChar, '/' );
 		return project.getGroupId() + ":" + project.getArtifactId() + ":" + sonarBranch + ":" + classeName;
 	}
 
